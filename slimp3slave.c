@@ -114,10 +114,10 @@ int debug = 0;
 
 int display = 0;
 
-char * server_name = "127.0.0.1";
-char * player_cmd = "mpg123 -q --buffer 256 -"; /* on Debian use mpg123-oss */
+char *server_name = "127.0.0.1";
+char *player_cmd = "mpg123 -q --buffer 256 -"; /* on Debian use mpg123-oss */
 
-struct in_addr * server_addr = NULL;
+struct in_addr *server_addr = NULL;
 
 char slimp3_display[DISPLAY_SIZE];
 
@@ -126,7 +126,7 @@ void sig_handler(int sig) {
     return;
 }
 
-ring_buf * ring_buf_create(int size, int threshold) {
+ring_buf* ring_buf_create(int size, int threshold) {
     ring_buf * b;
     b = xmalloc(sizeof(ring_buf));
     b->buf = (void*)xcalloc(1, size); 
@@ -136,7 +136,7 @@ ring_buf * ring_buf_create(int size, int threshold) {
     return b;
 }
 
-void memxcpy(void * dest, void * src, int size) {
+void memxcpy(void *dest, void *src, int size) {
     int i;
     for(i = 0; i < size >> 1; i++) {
         *(char*)(dest + i*2) = *(char*)(src + i*2 + 1);
@@ -145,7 +145,7 @@ void memxcpy(void * dest, void * src, int size) {
 
 }
 
-void ring_buf_write(ring_buf * b, void * data, int size) {
+void ring_buf_write(ring_buf *b, void *data, int size) {
     int r;
     if(size > b->size) {
         /* paranoia */
@@ -176,11 +176,11 @@ void ring_buf_write(ring_buf * b, void * data, int size) {
     }
 }
 
-void ring_buf_reset(ring_buf * b) {
+void ring_buf_reset(ring_buf *b) {
     b->tail = 0;
 }
 
-int ring_buf_nearly_full(ring_buf * b) {
+int ring_buf_nearly_full(ring_buf *b) {
     int s = b->head - b->tail;
     if(s < 0) {
         s += b->size;
@@ -189,7 +189,7 @@ int ring_buf_nearly_full(ring_buf * b) {
     return s > b->threshold;
 }
 
-void ring_buf_get_data(ring_buf * b, void ** p, int * size) {
+void ring_buf_get_data(ring_buf *b, void **p, int *size) {
     *p = b->buf + b->tail;
     *size = b->size - b->tail;
     if(b->head >= b->tail) {
@@ -201,7 +201,7 @@ int ring_buf_empty(ring_buf * b) {
     return b->head == b->tail;
 }
 
-void ring_buf_consume(ring_buf * b, int  amount) {
+void ring_buf_consume(ring_buf *b, int amount) {
     b->tail = (b->tail + amount);
     if(b->tail >= b->size) b->tail -= b->size;
 }
@@ -241,7 +241,7 @@ void output_pipe_close(FILE * f) {
 }
 
 
-void send_packet(int s, char * b, int l) {
+void send_packet(int s, char *b, int l) {
     struct sockaddr_in ina;
 
     ina.sin_family = AF_INET;
@@ -314,7 +314,9 @@ void say_hello(int s) {
 
 void receive_mpeg_data(int s, receive_mpeg_header* data, int bytes_read) {
 
-    if(debug) fprintf(stderr, "Address: %d Control: %d Seq: %d \n", ntohs(data->wptr), data->control, ntohs(data->seq));
+    if(debug) 
+        fprintf(stderr, "Address: %d Control: %d Seq: %d \n", ntohs(data->wptr), data->control, ntohs(data->seq));
+
     if(data->control == 3) {
         ring_buf_reset(outbuf);
     }
@@ -323,14 +325,16 @@ void receive_mpeg_data(int s, receive_mpeg_header* data, int bytes_read) {
 
     if(playmode == 0 || playmode == 1) {
         if(output_pipe == NULL) {
-            fprintf(stderr, "Opening pipe\n");
+            if(debug)
+                fprintf(stderr, "Opening pipe\n");
             output_pipe = output_pipe_open(); 
         }
     }
     else {
         fprintf(stderr, "Playmode: %d\n", playmode);
         if(output_pipe != NULL) {
-            fprintf(stderr, "Closing pipe\n");
+            if(debug)
+                fprintf(stderr, "Closing pipe\n");
             output_pipe_close(output_pipe);
             output_pipe = NULL;
         }
@@ -493,7 +497,6 @@ void loop(int s) {
              abort();
         }
         if(FD_ISSET(s, &read_fds)) {
-            /* fprintf(stderr, "Got packet !\n"); */
             read_packet(s);
         }
         else if(output_pipe != NULL ) {
@@ -508,7 +511,7 @@ void loop(int s) {
 }
 
 void init() {
-    struct hostent * h;
+    struct hostent *h;
     outbuf = ring_buf_create(OUT_BUF_SIZE, OUT_BUF_SIZE_90);
     recvbuf = (void*)xcalloc(1, RECV_BUF_SIZE);
     output_pipe = NULL;
