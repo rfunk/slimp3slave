@@ -2,10 +2,10 @@
 # Makefile:
 # Makefile for iftop.
 #
-# $Id: Makefile,v 1.5 2004/02/14 08:36:20 pdw Exp $
+# $Id: Makefile,v 1.6 2004/02/15 18:53:27 pdw Exp $
 #
 
-VERSION = 0.3
+VERSION = 0.4
 
 # C compiler to use.
 #CC = gcc
@@ -33,7 +33,7 @@ LDLIBS += -lcurses
 
 SRCS = slimp3slave.c util.c
 HDRS = util.h
-TXTS = 
+TXTS = README
 SPECFILE = 
 
 OBJS = $(SRCS:.c=.o)
