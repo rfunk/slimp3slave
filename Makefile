@@ -2,8 +2,10 @@
 # Makefile:
 # Makefile for iftop.
 #
-# $Id: Makefile,v 1.1 2003/12/13 15:11:29 pdw Exp $
+# $Id: Makefile,v 1.2 2003/12/14 21:18:55 pdw Exp $
 #
+
+VERSION = 0.1
 
 # C compiler to use.
 #CC = gcc
@@ -52,12 +54,12 @@ slimp3slave: $(OBJS) Makefile
 clean:
 	rm -f *~ *.o core 
 
-#tarball: depend $(SRCS) $(HDRS) $(TXTS) $(SPECFILE)
-#	mkdir iftop-$(VERSION)
-#	set -e ; for i in Makefile depend $(SRCS) $(HDRS) $(TXTS) $(SPECFILE) ; do cp $$i iftop-$(VERSION)/$$i ; done
-#	tar cvf - iftop-$(VERSION) | gzip --best > iftop-$(VERSION).tar.gz
-#	rm -rf iftop-$(VERSION)
-#
+tarball: depend $(SRCS) $(HDRS) $(TXTS) $(SPECFILE)
+	mkdir slimp3slave-$(VERSION)
+	set -e ; for i in Makefile depend $(SRCS) $(HDRS) $(TXTS) $(SPECFILE) ; do cp $$i slimp3slave-$(VERSION)/$$i ; done
+	tar cvf - slimp3slave-$(VERSION) | gzip --best > slimp3slave-$(VERSION).tar.gz
+	rm -rf slimp3slave-$(VERSION)
+
 tags :
 	etags *.c *.h
 

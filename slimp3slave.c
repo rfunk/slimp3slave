@@ -10,6 +10,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <netdb.h>
+#include <unistd.h>
 
 #include "util.h"
 
@@ -66,6 +68,12 @@ int playmode = 3;
 
 FILE * output_pipe = NULL;
 
+int debug = 0;
+
+char * server_name = "127.0.0.1";
+char * player_cmd = "mpg123 --buffer 256 -";
+
+struct in_addr * server_addr = NULL;
 
 ring_buf * ring_buf_create(int size, int threshold) {
     ring_buf * b;
@@ -150,9 +158,10 @@ void ring_buf_consume(ring_buf * b, int  amount) {
 
 FILE * output_pipe_open() {
     FILE * f;
-    f = popen("mpg123 --buffer 256 -", "w");
+    f = popen(player_cmd, "w");
     if(f == NULL) {
-        abort();
+        perror("Unable to open player");
+        exit(1);
     }
     return f;
 }
@@ -186,7 +195,7 @@ void send_packet(int s, char * b, int l) {
 
     ina.sin_family = AF_INET;
     ina.sin_port = htons(SERVER_PORT);
-    ina.sin_addr.s_addr = inet_addr("10.0.0.2"); 
+    ina.sin_addr = *server_addr; 
 
     if(sendto(s, b, l, 0, (const struct sockaddr*)&ina, sizeof(ina)) == -1) {
         perror("Could not send packet");
@@ -200,6 +209,9 @@ void send_discovery(int s) {
     pkt[0] = 'd';
     pkt[1] = 1;
     pkt[2] = 0x11;
+
+    if(debug) fprintf(stderr, "=> sending discovery request\n");
+
 
     send_packet(s, pkt, sizeof(pkt));
 }
@@ -231,7 +243,7 @@ void send_ack(int s, unsigned short seq) {
     pkt.rptr = htons(outbuf->tail >> 1);
     pkt.seq = htons(seq);
 
-    /* fprintf(stderr, "=> sending ack for %d\n", seq); */
+    if(debug) fprintf(stderr, "=> sending ack for %d\n", seq); 
     send_packet(s, (void*)&pkt, sizeof(request_data_struct));
 
 }
@@ -252,7 +264,7 @@ void say_hello(int s) {
 void receive_mpeg_data(int s, receive_mpeg_header* data, int bytes_read) {
     int addr;
 
-    /* fprintf(stderr, "Address: %d Control: %d Seq: %d \n", ntohs(data->wptr), data->control, ntohs(data->seq)); */
+    if(debug) fprintf(stderr, "Address: %d Control: %d Seq: %d \n", ntohs(data->wptr), data->control, ntohs(data->seq));
     if(data->control == 3) {
         ring_buf_reset(outbuf);
     }
@@ -273,18 +285,8 @@ void receive_mpeg_data(int s, receive_mpeg_header* data, int bytes_read) {
         }
     }
 
-
-
-
-    // ring_buf_write(outbuf, recvbuf + 18, bytes_read - 18);
     outbuf->head = htons(data->wptr) << 1;
     memcpy(outbuf->buf + outbuf->head, recvbuf + 18, bytes_read - 18);
-    //if(outbuf->head > outbuf->threshold) {
-    //    fwrite(outbuf->buf, outbuf->threshold, 1, output_pipe);
-    //    fclose(output_pipe);
-    //    fprintf(stderr,  "writing output\n");
-    //    exit;
-   // }
     send_ack(s, ntohs(data->seq));
     
 }
@@ -301,25 +303,25 @@ void read_packet(int s) {
     else {
         switch(((char*)recvbuf)[0]) {
             case 'D':
-                fprintf(stderr, "<= discovery response\n");
+                if(debug) fprintf(stderr, "<= discovery response\n"); 
                 say_hello(s);
                 break;
             case 'h':
-                fprintf(stderr, "<= hello\n");
+                if(debug) fprintf(stderr, "<= hello\n");
                 say_hello(s);
                 break;
             case 'l':
-                /* fprintf(stderr, "<= LCD data\n");*/
+                if(debug) fprintf(stderr, "<= LCD data\n");
                 break;
             case 's':
-                fprintf(stderr, "<= stream control\n");
+                if(debug) fprintf(stderr, "<= stream control\n");
                 break;
             case 'm':
-                /* fprintf(stderr, "<= mpeg data\n"); */
+                if(debug) fprintf(stderr, "<= mpeg data\n"); 
                 receive_mpeg_data(s, recvbuf, bytes_read);
                 break;
             case '2':
-                /* fprintf(stderr, "<= i2c data\n"); */
+                if(debug) fprintf(stderr, "<= i2c data\n"); 
                 break;
         }
     }
@@ -355,7 +357,7 @@ void loop(int s) {
             /* fprintf(stderr, "Got packet !\n"); */
             read_packet(s);
         }
-	else if(output_pipe != NULL ) {
+        else if(output_pipe != NULL ) {
             if(FD_ISSET(p, &write_fds)) {
                 output_pipe_write();
             }
@@ -367,19 +369,21 @@ void loop(int s) {
 }
 
 void init() {
+    struct hostent * h;
     outbuf = ring_buf_create(OUT_BUF_SIZE, OUT_BUF_SIZE_90);
     recvbuf = (void*)xcalloc(1, RECV_BUF_SIZE);
-    //output_pipe = output_pipe_open();
     output_pipe = NULL;
+    h = gethostbyname((const char *)server_name);
+    if(h == NULL) {
+        fprintf(stderr, "Unable to get address for %s\n", server_name);
+        exit(1);
+    }
+    server_addr = (struct in_addr*)h->h_addr;
 }
 
-int main(int argc, char** argv) {
+int server_connect() {
     int s;
     struct sockaddr_in my_addr;
-    int state = STATE_STARTUP;
-
-
-    init();
 
     s = socket(AF_INET, SOCK_DGRAM, 0);
 
@@ -388,18 +392,61 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    my_addr.sin_family = AF_INET;         // host byte order
-    my_addr.sin_port = htons(CLIENT_PORT);     // short, network byte order
+    my_addr.sin_family = AF_INET;         
+    my_addr.sin_port = htons(CLIENT_PORT); 
     my_addr.sin_addr.s_addr = INADDR_ANY;
-    memset(&(my_addr.sin_zero), '\0', 8); // zero the rest of the struct
+    memset(&(my_addr.sin_zero), '\0', 8); 
     bind(s, (struct sockaddr *)&my_addr, sizeof(struct sockaddr));
 
+    return s;
+}
+
+void usage() {
+    fprintf(stderr,
+"Usage: slimp3slave -h | -s serveraddress -v\n"
+"\n"
+"    -v                 verbose mode\n"
+"    -s serveraddress   specifies server address\n"
+"    -c playercmd       MP3 player command\n"
+"\n"
+"copyright (c) 2003 Paul Warren <pdw@ex-parrot.com>\n"
+           );
+
+}
+
+void get_options(int argc, char **argv) {
+    int opt;
+    while((opt = getopt(argc, argv, "+vhs:c:")) != -1) {
+        switch(opt) {
+            case 'h':
+                usage();
+                exit(0);
+
+            case 'v':
+                debug = 1;
+                break;
+        
+            case 's':
+                server_name = xstrdup(optarg);
+                break;
+
+            case 'c':
+                player_cmd = xstrdup(optarg);
+                break;
+        }
+    }
+}
+
+int main(int argc, char** argv) {
+    int s;
+
+    get_options(argc, argv);
+
+    init();
+
+    s = server_connect();
     send_discovery(s);
-
     loop(s);
-    
-
-
 
     return 0;
 }

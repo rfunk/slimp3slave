@@ -9,5 +9,6 @@
 void *xmalloc(size_t n);
 void *xcalloc(size_t n, size_t m);
 void *xrealloc(void *w, size_t n);
+char *xstrdup(const char *s);
 
 #endif /* __UTIL_H_ */
