@@ -207,8 +207,8 @@ void send_discovery(int s) {
 
     memset(pkt, sizeof(pkt), 0);
     pkt[0] = 'd';
-    pkt[1] = 1;
-    pkt[2] = 0x11;
+    pkt[2] = 1;
+    pkt[3] = 0x11;
 
     if(debug) fprintf(stderr, "=> sending discovery request\n");
 
@@ -297,7 +297,7 @@ void read_packet(int s) {
     int bytes_read;
 
     bytes_read = recvfrom(s, recvbuf, RECV_BUF_SIZE, 0, NULL,0); // &ina, &slen);
-    if(bytes_read < 18) {
+    if(bytes_read == 0) {
         fprintf(stderr, "<= short packet");
     }
     else {
