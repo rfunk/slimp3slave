@@ -2,7 +2,7 @@
 # Makefile:
 # Makefile for iftop.
 #
-# $Id: Makefile,v 1.4 2003/12/15 23:13:37 pdw Exp $
+# $Id: Makefile,v 1.5 2004/02/14 08:36:20 pdw Exp $
 #
 
 VERSION = 0.3
@@ -29,7 +29,7 @@ MANDIR = man
 # You shouldn't need to change anything below this point.
 CFLAGS  += -g -Wall 
 LDFLAGS += -g 
-# LDLIBS += 
+LDLIBS += -lcurses
 
 SRCS = slimp3slave.c util.c
 HDRS = util.h

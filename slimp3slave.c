@@ -5,6 +5,7 @@
 
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <stdio.h>
@@ -15,6 +16,10 @@
 #include <signal.h>
 #include <locale.h>
 #include <ctype.h>
+#include <errno.h>
+#include <stdarg.h>
+#include <time.h>
+#include <curses.h>
 
 #include "util.h"
 
@@ -28,6 +33,7 @@
 #define OUT_BUF_SIZE_90  115000
 #define DISPLAY_SIZE 128
 #define LINE_LENGTH 40
+#define LINE_COUNT 2
 
 typedef struct {
     char type;
@@ -36,6 +42,18 @@ typedef struct {
     unsigned short rptr;
     char reserved2[12];
 } request_data_struct;
+
+typedef struct {
+    char type;
+    char zero;
+    /* optimizer wants to put two bytes here */
+    unsigned long time;/* since startup, in 625kHz ticks = 0.625 * microsecs */
+    char codeset; /* 0xff for JVC */
+    char bits; /* 16 for JVC */
+    /* optimizer wants to put two bytes here */
+    unsigned long code;
+    char macaddr[6];
+} __attribute__((packed)) send_ir_struct; /* be smarter than the optimizer */
 
 typedef struct {
     char type;
@@ -115,14 +133,153 @@ int debug = 0;
 int display = 0;
 
 char *server_name = "127.0.0.1";
-char *player_cmd = "mpg123 -q --buffer 256 -"; /* on Debian use mpg123-oss */
+char *player_cmd = "madplay -Q -";
 
 struct in_addr *server_addr = NULL;
 
 char slimp3_display[DISPLAY_SIZE];
+SCREEN *term = NULL;
+WINDOW *slimwin = NULL;
+WINDOW *errwin = NULL;
+WINDOW *msgwin = NULL;
+int using_curses = 0;
+
+struct timeval uptime; /* time we started */
+
+void initcurses(void) {
+    term = newterm(NULL, stdout, stdin);
+    if (term != NULL) {
+	int screen_width, screen_height;
+	int window_width = LINE_LENGTH+2;
+	int window_height = LINE_COUNT+2;
+	int org_x, org_y;
+
+	using_curses = 1;
+
+	cbreak();
+	noecho();
+	nonl();
+
+	nodelay(stdscr, TRUE);
+	intrflush(stdscr, FALSE);
+	keypad(stdscr, TRUE);
+	leaveok(stdscr, TRUE);
+	curs_set(0);
+
+	getmaxyx(stdscr, screen_height, screen_width);
+	org_x = (screen_width - window_width) / 2;
+	if (debug) {
+	    int msg_x, msg_y;
+
+	    org_y = 0;
+
+	    msgwin = subwin(stdscr,
+			    screen_height-window_height-1, screen_width,
+			    org_y+window_height+1, 0);
+	    getmaxyx(msgwin, msg_y, msg_x);
+	    wsetscrreg(msgwin, 0, msg_y);
+	    scrollok(msgwin, TRUE);
+	    idlok(msgwin, TRUE);
+	} else {
+	    /* center subwindow in main window */
+	    org_y = (screen_height - window_height - 1) / 2;
+	}
+
+	slimwin = subwin(stdscr, window_height, window_width, org_y, org_x);
+	box(slimwin, 0, 0);
+
+	if (screen_height > LINE_COUNT+2) {
+	    /* create one-line error message subwindow */
+	    errwin = subwin(stdscr, 1, screen_width, org_y+window_height, 0);
+	}
+
+	wrefresh(curscr);
+  }
+}
+
+void exitcurses(void) {
+    endwin();
+    delscreen(term);
+}
+
+void warn(const char* fmt, ...) {
+    va_list args;
+    char buf[80];
+
+    va_start(args, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, args);
+    va_end(args);
+    buf[sizeof(buf)-1] = '\0';
+
+    if (!using_curses) {
+	fputs(buf, stderr);
+    } else if (msgwin != NULL) {
+	int len = 0;
+	waddstr(msgwin, buf);
+	/* refresh only if the message ends with a newline */
+	len = strlen(buf);
+	if (len && (buf[len-1] == '\n')) wrefresh(msgwin);
+    }
+}
+
+void werror(const char *s) {
+    int err = errno;
+    char buf[80];
+    int len = 0;
+    buf[0] = '\0';
+
+    if (s == NULL) {
+	/* passing a NULL pointer clears the error status */
+	errno = 0;
+    } else {
+	snprintf(buf, sizeof(buf), "%s: %s\n", s, strerror(err));
+	buf[sizeof(buf)] = '\0';
+	len = strlen(buf);
+    }
+
+    if (using_curses) {
+	if (s != NULL) {
+	    beep();
+	    warn(buf);
+	}
+	if (errwin != NULL) {
+	    int cols = 0;
+	    int rows = 0;
+
+	    werase(errwin);
+
+	    if (s != NULL) {
+		getmaxyx(errwin, rows, cols);
+		cols++;
+		if (cols < len) {
+		    buf[cols] = '\0';
+		    len = strlen(buf);
+		}
+		wstandout(errwin);
+		mvwaddstr(errwin, 0, (cols - len)/2, buf);
+		wstandend(errwin);
+	    }
+	    wrefresh(errwin);
+	}
+    } else if (s != NULL) {
+	fprintf(stderr, "\a%s\n", buf);
+    }
+}
 
 void sig_handler(int sig) {
-    fprintf(stderr, "Ignoring sigpipe\n");
+    switch (sig) {
+    case SIGPIPE:
+	warn("Ignoring sigpipe\n");
+	break;
+    case SIGCONT:
+    case SIGWINCH:
+	if (using_curses) wrefresh(curscr);
+	break;
+    default:
+	if (using_curses) endwin();
+	exit(1);
+	break;
+    }
     return;
 }
 
@@ -185,7 +342,7 @@ int ring_buf_nearly_full(ring_buf *b) {
     if(s < 0) {
         s += b->size;
     }
-    fprintf(stderr, "Size: %d\n", s);
+    warn("Size: %d\n", s);
     return s > b->threshold;
 }
 
@@ -211,7 +368,7 @@ FILE * output_pipe_open() {
     FILE * f;
     f = popen(player_cmd, "w");
     if(f == NULL) {
-        perror("Unable to open player");
+        werror("Unable to open player");
         exit(1);
     }
     return f;
@@ -226,7 +383,7 @@ void output_pipe_write() {
     
     ring_buf_get_data(outbuf, &p, &size);
     if(size == 0) {
-        fprintf(stderr, "No data to write!\n");
+        warn("No data to write!\n");
         return  ;
     };
     if(size > 4096) {
@@ -240,6 +397,55 @@ void output_pipe_close(FILE * f) {
     fclose(f);
 }
 
+unsigned long curses2ir(int key) {
+    unsigned long ir = 0;
+
+    switch(key) {
+    case '0': ir = 0x76899867; break;
+    case '1': ir = 0x7689f00f; break;
+    case '2': ir = 0x7689f00f; break;
+    case '3': ir = 0x76898877; break;
+    case '4': ir = 0x768948b7; break;
+    case '5': ir = 0x7689c837; break;
+    case '6': ir = 0x768928d7; break;
+    case '7': ir = 0x7689a857; break;
+    case '8': ir = 0x76896897; break;
+    case '9': ir = 0x7689e817; break;
+    case KEY_DOWN: ir = 0x7689b04f; break; /* arrow_down */
+    case KEY_LEFT: ir = 0x7689906f; break; /* arrow_left */
+    case KEY_RIGHT: ir = 0x7689d02f; break; /* arrow_right */
+    case KEY_UP: ir = 0x7689e01f; break; /* arrow_up */
+    //case KEY_NPAGE: ir = 0x768900ff; break; /* voldown */
+    //case KEY_PPAGE: ir = 0x7689807f; break; /* volup */
+    case '!': ir = 0x768940bf; break; /* power */
+    case '[': ir = 0x7689c03f; break; /* rew */
+    case ' ': ir = 0x768920df; break; /* pause */
+    case ']': ir = 0x7689a05f; break; /* fwd */
+    case KEY_IC: ir = 0x7689609f; break; /* add */
+    case KEY_DC: ir = 0x7689609f; break; /* add */
+    case '\r': ir = 0x768910ef; break; /* play */
+    case '/': ir = 0x768958a7; break; /* search */
+    case '?': ir = 0x7689d827; break; /* shuffle */
+    case 'r': ir = 0x768938c7; break; /* repeat */
+    case 's': ir = 0x7689b847; break; /* sleep */
+    case KEY_HOME: ir = 0x76897887; break; /* now_playing */
+    case '+': ir = 0x7689f807; break; /* size */
+    //case '*': ir = 0x768904fb; break; /* brightness */
+
+	/* non-IR key actions */
+    case '\f': wrefresh(curscr); break; /* repaint screen */
+    case 'v': /* toggle debug mode */
+	exitcurses();
+	debug = !debug;
+	initcurses();
+	break;
+    case KEY_BACKSPACE: werror(NULL); break;
+    //case 'E': errno=0; werror("Error test"); break;
+    case 'q': exitcurses(); exit(0); /* quit */
+  }
+
+  return (unsigned long)ir;
+}
 
 void send_packet(int s, char *b, int l) {
     struct sockaddr_in ina;
@@ -249,7 +455,7 @@ void send_packet(int s, char *b, int l) {
     ina.sin_addr = *server_addr; 
 
     if(sendto(s, b, l, 0, (const struct sockaddr*)&ina, sizeof(ina)) == -1) {
-        perror("Could not send packet");
+        werror("Could not send packet");
     };
 }
 
@@ -261,7 +467,7 @@ void send_discovery(int s) {
     pkt[2] = 1;
     pkt[3] = 0x11;
 
-    if(debug) fprintf(stderr, "=> sending discovery request\n");
+    if(debug) warn("=> sending discovery request\n");
 
 
     send_packet(s, pkt, sizeof(pkt));
@@ -271,7 +477,7 @@ void request_data(int s) {
     request_data_struct pkt;
 
     if(ring_buf_nearly_full(outbuf)) {
-        fprintf(stderr,"Ring buffer nearly full\n");
+        warn("Ring buffer nearly full\n");
         return;
     }
 
@@ -280,7 +486,7 @@ void request_data(int s) {
     pkt.wptr = outbuf->head >> 1;
     pkt.rptr = 0;
 
-    fprintf(stderr, "=> requesting data for %d\n", pkt.wptr);
+    warn("=> requesting data for %d\n", pkt.wptr);
     send_packet(s, (void*)&pkt, sizeof(request_data_struct));
 }
 
@@ -294,7 +500,7 @@ void send_ack(int s, unsigned short seq) {
     pkt.rptr = htons(outbuf->tail >> 1);
     pkt.seq = htons(seq);
 
-    if(debug) fprintf(stderr, "=> sending ack for %d\n", seq); 
+    if(debug) warn("=> sending ack for %d\n", seq); 
     send_packet(s, (void*)&pkt, sizeof(request_data_struct));
 
 }
@@ -311,11 +517,44 @@ void say_hello(int s) {
 
 }
 
+void send_ir(int s, char codeset, unsigned long code, int bits) {
+    send_ir_struct pkt;
+    struct timeval now;
+    struct timezone tz;
+    struct timeval diff;
+    unsigned long usecs;
+    unsigned long ticks;
+
+    gettimeofday(&now, &tz);
+    now.tv_sec -= 60 * tz.tz_minuteswest; /* canonicalize to GMT/UTC */
+    if (now.tv_usec < uptime.tv_usec) {
+	/* borrowing */
+	now.tv_usec += 1000;
+	now.tv_sec -= 1;
+    }
+    diff.tv_usec = now.tv_usec - uptime.tv_usec;
+    diff.tv_sec = now.tv_sec - uptime.tv_sec;
+    usecs = diff.tv_sec * 1000000L + diff.tv_usec;
+    ticks = (unsigned int)(0.625 * (double)usecs);
+
+    memset(&pkt, 0, sizeof(send_ir_struct));
+    pkt.type = 'i';
+    pkt.zero = 0;
+    pkt.time = htonl(ticks);
+    pkt.codeset = codeset;
+    pkt.bits = (char)bits;
+    pkt.code = htonl(code);
+
+    if(debug) warn("=> sending IR code 0x%08x at tick %lu (%lu usec)\n",
+		   code, ticks, usecs);
+
+    send_packet(s, (void*)&pkt, sizeof(pkt));
+}
 
 void receive_mpeg_data(int s, receive_mpeg_header* data, int bytes_read) {
 
     if(debug) 
-        fprintf(stderr, "Address: %d Control: %d Seq: %d \n", ntohs(data->wptr), data->control, ntohs(data->seq));
+        warn("Address: %d Control: %d Seq: %d \n", ntohs(data->wptr), data->control, ntohs(data->seq));
 
     if(data->control == 3) {
         ring_buf_reset(outbuf);
@@ -326,15 +565,15 @@ void receive_mpeg_data(int s, receive_mpeg_header* data, int bytes_read) {
     if(playmode == 0 || playmode == 1) {
         if(output_pipe == NULL) {
             if(debug)
-                fprintf(stderr, "Opening pipe\n");
+                warn("Opening pipe\n");
             output_pipe = output_pipe_open(); 
         }
     }
     else {
-        fprintf(stderr, "Playmode: %d\n", playmode);
+        warn("Playmode: %d\n", playmode);
         if(output_pipe != NULL) {
             if(debug)
-                fprintf(stderr, "Closing pipe\n");
+                warn("Closing pipe\n");
             output_pipe_close(output_pipe);
             output_pipe = NULL;
         }
@@ -346,13 +585,31 @@ void receive_mpeg_data(int s, receive_mpeg_header* data, int bytes_read) {
     
 }
 
+void show_display_buffer(char *ddram) {
+    char line1[LINE_LENGTH+1];
+    char *line2;
+    char sepline[LINE_LENGTH+1];
+
+    memset(line1, 0, LINE_LENGTH+1);
+    strncpy(line1, ddram, LINE_LENGTH);   
+    line2 = &(ddram[0x40]);
+    line2[LINE_LENGTH] = '\0';
+
+    if (using_curses) {
+      mvwaddnstr(slimwin, 1, 1, line1, LINE_LENGTH);
+      mvwaddnstr(slimwin, 2, 1, line2, LINE_LENGTH);
+      wrefresh(slimwin);
+    } else {
+      memset(sepline, '-', LINE_LENGTH);
+      sepline[LINE_LENGTH] = '\0';
+      printf("\n+%s+\n|%s|\n|%s|\n+%s+\n", sepline, line1, line2, sepline);
+    }
+}
+
 void receive_display_data(char * ddram, unsigned short *data, int bytes_read) {
     unsigned short *display_data;
     int n;
     int addr = 0; /* counter */
-    char line1[LINE_LENGTH+1];
-    char *line2;
-    char sepline[LINE_LENGTH+1];
 
     if (bytes_read % 2) bytes_read--; /* even number of bytes */
     display_data = &(data[9]); /* display data starts at byte 18 */
@@ -364,11 +621,11 @@ void receive_display_data(char * ddram, unsigned short *data, int bytes_read) {
         d = ntohs(display_data[n]);
         t = (d & 0x00ff00) >> 8; /* type of display data */
         c = (d & 0x0000ff); /* character/command */
-        //if (debug) fprintf(stderr, "[%02x]  Type: 0x%02x  Data: 0x%02x\n", addr, t, c);
+        //if (debug) warn("[%02x]  Type: 0x%02x  Data: 0x%02x\n", addr, t, c);
         switch (t) {
             case 0x03: /* character */
                 c = vfd2latin1[c];
-                //if (debug) fprintf(stderr, "====> character 0x%02x \"%c\"\n", c, c);
+                //if (debug) warn("====> character 0x%02x \"%c\"\n", c, c);
                 if (!isprint(c)) c = ' ';
                 if (addr <= DISPLAY_SIZE)
                     ddram[addr++] = c;
@@ -407,13 +664,19 @@ void receive_display_data(char * ddram, unsigned short *data, int bytes_read) {
     }
     }
 
-    memset(line1, 0, LINE_LENGTH+1);
-    strncpy(line1, ddram, LINE_LENGTH);   
-    line2 = &(ddram[0x40]);
-    line2[LINE_LENGTH] = '\0';
-    memset(sepline, '-', LINE_LENGTH);
-    sepline[LINE_LENGTH] = '\0';
-    printf("+%s+\n|%s|\n|%s|\n+%s+\n\n", sepline, line1, line2, sepline);
+    show_display_buffer(ddram);
+}
+
+void read_key(int s) {
+  int key = 0;
+  unsigned long ir = 0;
+  char codeset = 0xff;
+  int bits = 16;
+
+  while ((key = getch()) != ERR) {
+    ir = curses2ir(key);
+    if (ir != 0) send_ir(s, codeset, ir, bits);
+  }
 }
 
 void read_packet(int s) {
@@ -428,43 +691,44 @@ void read_packet(int s) {
     }
     if(bytes_read < 1) {
         if (bytes_read < 0) {
-            perror("recvfrom");
+	    if (errno != EINTR)
+		werror("recvfrom");
         } else {
-            fprintf(stderr, "Peer closed connection\n");
+            warn("Peer closed connection\n");
         }
     }
     else if(bytes_read < 18) {
-        fprintf(stderr, "<= short packet\n");
+        warn("<= short packet\n");
     }
     else if (ina_in->sin_addr.s_addr != server_addr->s_addr) {
         /* ignore this packet */
-        if (debug) fprintf(stderr, "<= packet from wrong server: %s\n",
+        if (debug) warn("<= packet from wrong server: %s\n",
                            inet_ntoa(ina_in->sin_addr));
     }
     else {
         switch(((char*)recvbuf)[0]) {
             case 'D':
-                if(debug) fprintf(stderr, "<= discovery response\n"); 
+                if(debug) warn("<= discovery response\n"); 
                 say_hello(s);
                 break;
             case 'h':
-                if(debug) fprintf(stderr, "<= hello\n");
+                if(debug) warn("<= hello\n");
                 say_hello(s);
                 break;
             case 'l':
-                if(debug) fprintf(stderr, "<= LCD data\n");
+                if(debug) warn("<= LCD data\n");
                 if(display) 
                     receive_display_data(slimp3_display, recvbuf, bytes_read);
                 break;
             case 's':
-                if(debug) fprintf(stderr, "<= stream control\n");
+                if(debug) warn("<= stream control\n");
                 break;
             case 'm':
-                if(debug) fprintf(stderr, "<= mpeg data\n"); 
+                if(debug) warn("<= mpeg data\n"); 
                 receive_mpeg_data(s, recvbuf, bytes_read);
                 break;
             case '2':
-                if(debug) fprintf(stderr, "<= i2c data\n"); 
+                if(debug) warn("<= i2c data\n"); 
                 break;
         }
     }
@@ -481,7 +745,7 @@ void loop(int s) {
         int n = 0;
         int p;
 
-
+	FD_SET(0, &read_fds); /* watch stdin */
         FD_SET(s, &read_fds);
         if(s > n)  n = s ;
 
@@ -493,16 +757,21 @@ void loop(int s) {
         }
 
         if(select(n + 1, &read_fds, &write_fds, NULL, NULL) == -1) {
-             perror("select");
-             abort();
+	  if (errno != EINTR) {
+	    werror("select");
+	    abort();
+	  }
         }
         if(FD_ISSET(s, &read_fds)) {
             read_packet(s);
         }
-        else if(output_pipe != NULL ) {
-            if(FD_ISSET(p, &write_fds)) {
+	else if (FD_ISSET(0, &read_fds)) {
+	    read_key(s);
+	}
+	else if(output_pipe != NULL) {
+	    if(FD_ISSET(p, &write_fds)) {
                 output_pipe_write();
-            }
+	    }
         }
 
     }
@@ -512,12 +781,14 @@ void loop(int s) {
 
 void init() {
     struct hostent *h;
+    struct timezone tz;
+
     outbuf = ring_buf_create(OUT_BUF_SIZE, OUT_BUF_SIZE_90);
     recvbuf = (void*)xcalloc(1, RECV_BUF_SIZE);
     output_pipe = NULL;
     h = gethostbyname((const char *)server_name);
     if(h == NULL) {
-        fprintf(stderr, "Unable to get address for %s\n", server_name);
+        warn("Unable to get address for %s\n", server_name);
         exit(1);
     }
     server_addr = (struct in_addr*)h->h_addr;
@@ -526,6 +797,12 @@ void init() {
     slimp3_display[DISPLAY_SIZE] = '\0';
 
     setlocale(LC_ALL, ""); /* so that isprint() works properly */
+
+    if (display) initcurses();
+
+    /* save start time for sending IR packet */
+    gettimeofday(&uptime, &tz);
+    uptime.tv_sec -= 60 * tz.tz_minuteswest; /* canonicalize to GMT/UTC */
 }
 
 int server_connect() {
@@ -535,7 +812,7 @@ int server_connect() {
     s = socket(AF_INET, SOCK_DGRAM, 0);
 
     if(s == -1) {
-        perror("Could not open socket");
+        werror("Could not open socket");
         return 1;
     }
 
@@ -544,7 +821,7 @@ int server_connect() {
     my_addr.sin_addr.s_addr = INADDR_ANY;
     memset(&(my_addr.sin_zero), '\0', 8); 
     if(bind(s, (struct sockaddr *)&my_addr, sizeof(struct sockaddr))) {
-        perror("Unable to bind to port: ");
+        werror("Unable to bind to port: ");
     }
 
 
@@ -559,6 +836,25 @@ void usage() {
 "    -l                 enable LCD display output\n"
 "    -s serveraddress   specifies server address\n"
 "    -c playercmd       MP3 player command\n"
+"\n"
+"Special Keys:\n"
+"    !                  Power\n"
+"    Enter              Play\n"
+"    Space              Pause\n"
+"    Insert             Add\n"
+"    Delete             Add\n"
+"    Home               Now Playing\n"
+"    [                  Rewind\n"
+"    ]                  Forward\n"
+"    /                  Search\n"
+"    ?                  Shuffle\n"
+"    r                  Repeat\n"
+"    s                  Sleep\n"
+"    +                  Size (double-size not usable)\n"
+"    ^L                 Refresh Screen\n"
+"    v                  Debug mode Toggle\n"
+"    Backspace          Clear Error Message\n"
+"    q                  Quit Program\n"
 "\n"
 "copyright (c) 2003 Paul Warren <pdw@ex-parrot.com>\n"
            );
@@ -599,6 +895,11 @@ int main(int argc, char** argv) {
     get_options(argc, argv);
 
     signal(SIGPIPE, sig_handler);
+    signal(SIGCONT, sig_handler);
+    signal(SIGTERM, sig_handler);
+    signal(SIGHUP, sig_handler);
+    signal(SIGINT, sig_handler);
+    signal(SIGWINCH, sig_handler);
 
     init();
 
