@@ -169,9 +169,10 @@ void output_pipe_write() {
         fprintf(stderr, "No data to write!\n");
         return  ;
     };
-    //fprintf(stderr, "wroting %d\n", size);
+    if(size > 4096) {
+        size = 4096;
+    }
     written = write(fileno(output_pipe), p, size);
-    fprintf(stderr, "wrote %d\n", written);
     ring_buf_consume(outbuf, written);
 }
 
@@ -251,7 +252,7 @@ void say_hello(int s) {
 void receive_mpeg_data(int s, receive_mpeg_header* data, int bytes_read) {
     int addr;
 
-    // fprintf(stderr, "Address: %d Control: %d Seq: %d \n", ntohs(data->wptr), data->control, ntohs(data->seq));
+    /* fprintf(stderr, "Address: %d Control: %d Seq: %d \n", ntohs(data->wptr), data->control, ntohs(data->seq)); */
     if(data->control == 3) {
         ring_buf_reset(outbuf);
     }
@@ -301,7 +302,7 @@ void read_packet(int s) {
         switch(((char*)recvbuf)[0]) {
             case 'D':
                 fprintf(stderr, "<= discovery response\n");
-                //request_data(s); 
+                say_hello(s);
                 break;
             case 'h':
                 fprintf(stderr, "<= hello\n");
@@ -318,7 +319,7 @@ void read_packet(int s) {
                 receive_mpeg_data(s, recvbuf, bytes_read);
                 break;
             case '2':
-                fprintf(stderr, "<= i2c data\n");
+                /* fprintf(stderr, "<= i2c data\n"); */
                 break;
         }
     }
