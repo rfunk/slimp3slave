@@ -403,7 +403,7 @@ unsigned long curses2ir(int key) {
     switch(key) {
     case '0': ir = 0x76899867; break;
     case '1': ir = 0x7689f00f; break;
-    case '2': ir = 0x7689f00f; break;
+    case '2': ir = 0x768908f7; break;
     case '3': ir = 0x76898877; break;
     case '4': ir = 0x768948b7; break;
     case '5': ir = 0x7689c837; break;
