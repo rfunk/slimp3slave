@@ -205,7 +205,7 @@ void send_packet(int s, char * b, int l) {
 void send_discovery(int s) {
     char pkt[18];
 
-    memset(pkt, sizeof(pkt), 0);
+    memset(pkt, 0, sizeof(pkt));
     pkt[0] = 'd';
     pkt[2] = 1;
     pkt[3] = 0x11;
@@ -224,7 +224,7 @@ void request_data(int s) {
         return;
     }
 
-    memset(&pkt, sizeof(request_data_struct), 0);
+    memset(&pkt, 0, sizeof(request_data_struct));
     pkt.type = 'r';
     pkt.wptr = outbuf->head >> 1;
     pkt.rptr = 0;
@@ -237,7 +237,7 @@ void request_data(int s) {
 void send_ack(int s, unsigned short seq) {
     packet_ack pkt;
 
-    memset(&pkt, sizeof(request_data_struct), 0);
+    memset(&pkt, 0, sizeof(request_data_struct));
     pkt.type = 'a';
     pkt.wptr = htons(outbuf->head >> 1);
     pkt.rptr = htons(outbuf->tail >> 1);
@@ -251,7 +251,7 @@ void send_ack(int s, unsigned short seq) {
 void say_hello(int s) {
     char pkt[18];
 
-    memset(pkt, sizeof(pkt), 0);
+    memset(pkt, 0, sizeof(pkt));
     pkt[0] = 'h';
     pkt[1] = 1;
     pkt[2] = 0x11;
@@ -297,7 +297,7 @@ void read_packet(int s) {
     int bytes_read;
 
     bytes_read = recvfrom(s, recvbuf, RECV_BUF_SIZE, 0, NULL,0); // &ina, &slen);
-    if(bytes_read == 0) {
+    if(bytes_read < 18) {
         fprintf(stderr, "<= short packet");
     }
     else {
