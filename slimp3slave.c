@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <netdb.h>
 #include <unistd.h>
+#include <signal.h>
 
 #include "util.h"
 
@@ -74,6 +75,11 @@ char * server_name = "127.0.0.1";
 char * player_cmd = "mpg123 --buffer 256 -";
 
 struct in_addr * server_addr = NULL;
+
+void sig_handler(int sig) {
+    fprintf(stderr, "Ignoring sigpipe\n");
+    return;
+}
 
 ring_buf * ring_buf_create(int size, int threshold) {
     ring_buf * b;
@@ -441,6 +447,8 @@ int main(int argc, char** argv) {
     int s;
 
     get_options(argc, argv);
+
+    signal(SIGPIPE, sig_handler);
 
     init();
 
