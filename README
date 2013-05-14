@@ -26,4 +26,8 @@ slimp3slave was originally written as an audio-only client by Paul
 Warren <pdw@ex-parrot.com> and has since been extending to include a UI
 implentation using curses by Rob Funk <rfunk@funknet.net>.
 
+The original canonical site for slimp3slave is:
+  http://www.ex-parrot.com/slimp3slave
 
+This git repository was created from the slimp3slave CVS repository at:
+  :pserver:anonymous@sphinx.mythic-beasts.com:/home/pdw/vcvs/repos
