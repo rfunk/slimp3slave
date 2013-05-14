@@ -9,8 +9,9 @@ MP3 player at the
 `http://.../stream.mp3` stream.
 
 slimp3slave makes use of a command line MP3 player that reads from
-standard input.  I recommend `madplay`, or failing that `splay`.  `mpg123`
-is not recommended as it does not handle partial frames gracefully.
+standard input.  The default is `madplay`, but `splay` should work.
+`mpg123` has been problematic as it does not handle partial frames
+gracefully.
 
 To use slimp3slave, type `make`, then run `slimp3slave` optionally
 specifying the server IP address:
