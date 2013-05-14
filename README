@@ -1,8 +1,9 @@
 slimp3slave
 
 slimp3slave is a console application implementation of a SLIMP3 client.
+  http://wiki.slimdevices.com/index.php/SLIMP3
 It was written to avoid the irritating lag that you get when pointing an
-MP3 player at the http://.../stream.mp3 stream.
+MP3 player at the Squeezebox server's http://.../stream.mp3 stream.
 
 slimp3slave makes use of a command line MP3 player that reads from
 standard input.  I recommend madplay, or failing that splay.  mpg123
