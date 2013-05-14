@@ -394,7 +394,7 @@ void output_pipe_write() {
 }
 
 void output_pipe_close(FILE * f) {
-    fclose(f);
+    pclose(f);
 }
 
 unsigned long curses2ir(int key) {
