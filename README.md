@@ -14,17 +14,20 @@ is not recommended as it does not handle partial frames gracefully.
 
 To use slimp3slave, type `make`, then run `slimp3slave` optionally
 specifying the server IP address:
+
     ./slimp3slave -s 1.2.3.4
 
 For more information:
+
     ./slimp3slave -h
 
 To run slimp3slave with the UI enabled, using the `-l` option.  To start
 slimp3slave in its own window, try:
+
     xterm -geometry 42x5 -e slimp3slave -l -s 1.2.3.4
 
 slimp3slave was originally written as an audio-only client by Paul
-Warren <pdw@ex-parrot.com> and has since been extending to include a UI
+Warren <pdw@ex-parrot.com> and has since been extended to include a UI
 implentation using curses by Rob Funk <rfunk@funknet.net>.
 
 The original canonical site for slimp3slave is:
